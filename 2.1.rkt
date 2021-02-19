@@ -20,6 +20,9 @@
   (= (* (numer x) (denom y))
      (* (numer y) (denom x))))
 
+(define numer car)
+(define denom cdr)
+
 (define (gcd a b)
   (if (= b 0)
       a
@@ -33,10 +36,9 @@
     (if(< x 0)
        (cons (/ (positive x) g) (/ (negative y) g))
        (cons (/ x g) (/ y g)))))
-;(cons (/ x g) (/ y g))
-(define numer car)
-(define denom cdr)
 
+
+;(cons (/ x g) (/ y g))
 (define x (cons 1 2))
 (define y (cons 3 4))
 
