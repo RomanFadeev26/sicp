@@ -16,41 +16,40 @@
         ((cond? exp) (eval (cond->if exp) env))
         ((and? exp) (eval (and->if exp) env))
         ((application? exp)
-         (apply (eval (operator exp) env)
+         (apply-interpretator (eval (operator exp) env)
                 (list-of-values (operands exp) env)))
         (else
          (error "Неизвестный тип выражения -- EVAL" exp))))
 
-(define (eval2 exp env)
-  (cond ((self-evaluating? exp) exp)
-        ((variable? exp) (lookup-variable-value exp env))
-        ((get (operator exp)) ((get (operator exp)) operands exp env))
-        ((application? exp)
-         (apply (eval (operator exp) env)
-                (list-of-values (operands exp) env)))
-        (else
-         (error "Неизвестный тип выражения -- EVAL" exp))))
+;(define (eval2 exp env)
+;  (cond ((self-evaluating? exp) exp)
+;        ((variable? exp) (lookup-variable-value exp env))
+;        ((get (operator exp)) ((get (operator exp)) operands exp env))
+ ;       ((application? exp)
+  ;       (apply (eval (operator exp) env)
+   ;             (list-of-values (operands exp) env)))
+    ;    (else
+      ;    (error "Неизвестный тип выражения -- EVAL" exp))))
 
-(define (install-eval-package)
-  (define (quoted exp env) (text-of-quotation exp env))
-  (define (assignment exp env) (eval-assignment exp env))
-  (define (definition exp env) (eval-definition exp env))
-  (define (if exp env) (eval-if exp env))
-  (define (lambda exp env) (make-procedure (lambda-parameters exp)
-                                           (lambda-body exp)
-                                           env))
-  (define (begin exp env) (eval-sequence (begin-actions exp) env))
-  (define (cond exp env))
+;(define (install-eval-package)
+ ; (define (quoted exp env) (text-of-quotation exp env))
+  ;(define (assignment exp env) (eval-assignment exp env))
+  ;(define (definition exp env) (eval-definition exp env))
+  ;(define (if exp env) (eval-if exp env))
+  ;(define (lambda exp env) (make-procedure (lambda-parameters exp)
+   ;                                        (lambda-body exp)
+    ;                                       env))
+  ;(define (begin exp env) (eval-sequence (begin-actions exp) env))
+  ;(define (cond exp env))
 
-  (put 'quote quoted)
-  (put 'set! assignment)
-  (put 'define definition)
-  (put 'if if)
-  (put 'lambda lambda)
-  (put 'cond cond)
-  )
+  ;(put 'quote quoted)
+  ;(put 'set! assignment)
+  ;(put 'define definition)
+  ;(put 'if if)
+  ;(put 'lambda lambda)
+  ;(put 'cond cond))
 
-(define (apply procedure arguments)
+(define (apply-interpretator procedure arguments)
   (cond ((primitive-procedure? procedure)
          (apply-primitive-procedure procedure arguments))
         ((compound-procedure? procedure)
@@ -93,9 +92,15 @@
     env)
   'ok)
 
+(define (eval-assignment exp env)
+  (set-variable-value! (assignment-variable exp)
+                       (eval (assignment-value exp) env)
+                       env)
+  'ok)
+
 (define (list-of-values-left exps env)
   (if (no-operands? exps)
-      '()
+      (list)
       (let ((fst-value (eval (first-operand exps) env)))
         (cons fst-value
               (list-of-values (rest-operands exps) env)))
@@ -104,7 +109,7 @@
 
 (define (list-of-values-right exps env)
   (if (no-operands? exps)
-      '()
+      (list)
       (let ((rest (list-of-values (rest-operands exps) env)))
         (cons (eval (first-operand exps) env)
               rest))
@@ -139,12 +144,12 @@
 (define (definition-variable exp)
   (if (symbol? (cadr exp))
       (cadr exp)
-      (caddr exp)))
+      (caadr exp)))
 
 (define (definition-value exp)
   (if (symbol? (cadr exp))
       (caddr exp)
-      (make-lambda (cdard exp)
+      (make-lambda (cdadr exp)
                    (cddr exp))))
 
 (define (lambda? exp)
@@ -160,7 +165,7 @@
 
 (define (if? exp) (tagged-list? exp 'if))
 
-(define (if-predivate exp) (cadr exp))
+(define (if-predicate exp) (cadr exp))
 
 (define (if-consequent exp) (caddr exp))
 
@@ -193,7 +198,7 @@
 (define (operands exp) (cdr exp))
 
 (define (no-operands? ops) (null? ops))
-(define (first-operands ops) (car ops))
+(define (first-operand ops) (car ops))
 (define (rest-operands ops) (cdr ops))
 
 (define (cond? exp) (tagged-list? exp 'cond))
@@ -207,7 +212,7 @@
 
 (define (cond-actions clause) (cdr clause))
 
-(define (cond->if? exp)
+(define (cond->if exp)
   (expand-clauses (cond-clauses exp)))
 
 (define (expand-clauses clauses)
@@ -221,19 +226,23 @@
                 (error "Ветвь ELSE не последняя -- COND-IF"
                        clauses))
             (make-if (cond-predicate first)
-                     (sequence->exp (cond-actions first))
+                     (if (with-consumer? first)
+                         (apply-interpretator (consumer first) (cond-predicate first))
+                         (sequence->exp (cond-actions first)))
                      (expand-clauses rest))))))
 
 
 (define (and->if exp)
   (expand-and-clauses (and-clauses exp)))
 
+(define (with-consumer? clause) (eq? (car (cond-actions clause)) '=>))
+(define (consumer clause) (cadr (cond-actions clause)))
+
 (define (expand-and-clauses clauses)
-  (if (last-clause? clauses)
+  (if (last-clause-and? clauses)
       (make-if (car clauses)
                (car clauses)
-               'false
-               )
+               'false)
       (make-if (car clauses)
                (expand-and-clauses (cdr clauses))
                'false)))
@@ -247,16 +256,241 @@
   (expand-and-clauses (or-clauses exp)))
 
 (define (expand-or-clauses clauses)
-  (if (last-clause? clauses)
+  (if (last-clause-or? clauses)
       (make-if (car clauses)
                (car clauses)
-               'false
-               )
+               'false)
       (make-if (car clauses)
                (car clauses)
-               (expand-and-clauses (cdr clauses))
-               )))
+               (expand-and-clauses (cdr clauses)))))
 
 (define (or? exp) (tagged-list? exp 'or))
 (define (or-clauses exp) (cdr exp))
 (define (last-clause-or? exp) (null? (cdr exp)))
+
+(define (true? x)
+  (not (eq? x false)))
+(define (false? x)
+  (eq? x false))
+
+(define (make-procedure parameters body env)
+  (list 'procedure parameters body env))
+
+(define (compound-procedure? p)
+  (tagged-list? p 'procedure))
+
+(define (procedure-parameters p) (cadr p))
+(define (procedure-body p) (caddr p))
+(define (procedure-environment p) (cadddr p))
+
+(define (enclosing-environment env) (cdr env))
+(define (first-frame env) (car env))
+(define the-empty-environment '())
+
+(define (make-frame variables values)
+  (cons variables values))
+
+;(define (make-frame2 variables values)
+ ; (map-classic cons variables values))
+
+(define (frame-variables frame) (car frame))
+(define (frame-values frame) (cdr frame))
+
+(define (add-binding-to-frame! var val frame)
+  (set-car! frame (cons var (car frame)))
+  (set-cdr! frame (cons val (cdr frame))))
+
+;(define (add-binding-to-frame2! var val frame)
+ ; (set-car! frame (cons (cons var val) (car frame))))
+
+(define (extend-environment vars vals base-env)
+  (if (= (length vars) (length vals))
+      (cons (make-frame vars vals) base-env)
+      (if (< (length vars) (length vals))
+          (error "Получено слишком много аргументов" vars vals)
+          (error "Получено слишком мало аргументов" vars vals))))
+
+(define (lookup-variable-value var env)
+  (define (env-loop env)
+    (define (scan vars vals)
+      (cond ((null? vars)
+             (env-loop (enclosing-environment env)))
+            ((eq? var (car vars))
+             (car vals))
+            (else (scan (cdr vars) (cdr vals)))))
+    (if (eq? env the-empty-environment)
+        (error "Несвязанная переменная" var)
+        (let ((frame (first-frame env)))
+          (scan (frame-variables frame)
+                (frame-values frame)))))
+  (env-loop env))
+
+
+;(define (lookup-variable-value2 var env)
+ ; (define (env-loop env)
+  ;  (define (frame-loop frame)
+   ;     (cond ((null? frame) (env-loop (enclosing-environment env)))
+    ;          ((eq? var (car (car frame))) (cadr (car frame)))
+     ;         (else (frame-loop (cdr frame)))))
+    ;(if (eq? env the-empty-environment)
+     ;   (error "Несвязанная переменная" var)
+      ;  (frame-loop (first-frame env))))
+  ;(env-loop env))
+
+(define (set-variable-value! var val env)
+  (define (env-loop env)
+    (define (scan vars vals)
+      (cond ((null? vars)
+             (env-loop (enclosing-environment env)))
+            ((eq? var (car vars))
+             (set-car! vals val))
+            (else (scan (cdr vars) (cdr vals)))))
+    (if (eq? env the-empty-environment)
+        (error "Несвязанная переменная -- SET!" var)
+        (let ((frame (first-frame env)))
+          (scan (frame-variables frame)
+                (frame-values frame)))))
+  (env-loop env))
+
+;(define (set-variable-value2! var val env)
+ ; (define (env-loop env)
+  ;  (define (frame-loop frame)
+   ;     (cond ((null? frame) (env-loop (enclosing-environment env)))
+    ;          ((eq? var (car (car frame))) (set-cdr! (car frame) (list val)))
+     ;         (else (frame-loop (cdr frame)))))
+    ;(if (eq? env the-empty-environment)
+     ;   (error "Несвязанная переменная" var)
+      ;  (frame-loop (first-frame env))))
+  ;(env-loop env))
+
+;(define (define-variable2! var val env)
+ ; (let ((frame (first-frame env)))
+  ;  (define (frame-loop frame)
+   ;   (cond ((null? frame)
+    ;         (add-binding-to-frame2! var val first-frame))
+     ;       ((eq? var (car (car frame)))
+      ;       (set-cdr! (car frame) (list val)))
+       ;     (else (frame-loop (cdr frame)))
+        ;    ))
+    ;(frame-loop first-frame)))
+
+(define (define-variable! var val env)
+  (let ((frame (first-frame env)))
+    (define (scan vars vals)
+      (cond ((null? vars)
+             (add-binding-to-frame! var val frame))
+            ((eq? var (car vars))
+             (set-car! vals val))
+            (else (scan (cdr vars) (cdr vals)))))
+    (scan (frame-variables frame)
+          (frame-values frame))))
+
+;(define (find-binding var env)
+ ; (define (env-loop env)
+  ;  (define (frame-loop frame)
+   ;     (cond ((null? frame) (env-loop (enclosing-environment env)))
+    ;          ((eq? var (car (car frame))) (cadr (car frame)))
+     ;         (else (frame-loop (cdr frame)))))
+    ;(if (eq? env the-empty-environment)
+     ;   false
+      ;  (frame-loop (first-frame env))))
+  ;(env-loop env))
+
+;(define (set-binding val binding)
+ ; (set-cdr! binding (list val)))
+
+;(define (add-binding var val env)
+ ; (let ((frame (first-frame env)))
+  ;  (add-binding-to-frame! var val frame)))
+
+;(define (lookup-variable-value3 var env)
+ ; (let ((binding (find-binding var env)))
+  ;  (if (binding)
+   ;     (cadr binding)
+    ;    (error "Несвязанная переменная" var))))
+
+;(define (set-variable-value3! var val env)
+ ; (let ((binding (find-binding var env)))
+  ;  (if (binding)
+   ;     (set-binding val binding)
+    ;    (error "Несвязанная переменная" var))
+    ;))
+
+;(define (define-variable3! var val env)
+ ; (let ((binding (find-binding var env)))
+
+  ;  (if (binding)
+   ;     (set-binding val binding)
+    ;    (add-binding var val env)
+     ;   )))
+
+(define primitive-procedures
+  (list (list 'car car)
+        (list 'cdr cdr)
+        (list 'cons cons)
+        (list 'null? null?)
+        (list '+ +)))
+
+(define (primitive-procedure-names)
+  (map car
+       primitive-procedures))
+
+(define (primitive-procedure-objects)
+  (map (lambda (proc) (list 'primitive (cadr proc)))
+       primitive-procedures))
+
+(define (setup-environment)
+  (let ((initial-env
+         (extend-environment (primitive-procedure-names)
+                             (primitive-procedure-objects)
+                             the-empty-environment)))
+    (define-variable! 'true true initial-env)
+    (define-variable! 'false false initial-env)
+    initial-env))
+
+(define the-global-environment (setup-environment))
+
+(define (primitive-procedure? proc)
+  (tagged-list? proc 'primitive))
+
+(define (primitive-implementation proc) (cadr proc))
+
+
+
+(define apply-in-underlying-scheme apply)
+
+(define (apply-primitive-procedure proc args)
+  (apply-in-underlying-scheme
+   (primitive-implementation proc) args))
+
+(define input-prompt ";;; Ввод M-Eval:")
+(define output-prompt ";;; Значение M-Eval:")
+
+(define (driver-loop)
+ (prompt-for-input input-prompt)
+ (let ((input (read)))
+   (let ((output (eval input the-global-environment)))
+     (announce-output output-prompt)
+     (user-print output)))
+  (driver-loop))
+
+(define (prompt-for-input string)
+  (newline)
+  (newline)
+  (display string)
+  (newline))
+
+(define (announce-output string)
+  (newline)
+  (display string)
+  (newline))
+
+(define (user-print object)
+  (if (compound-procedure? object)
+      (display (list 'compound-procedure
+                     (procedure-parameters object)
+                     (procedure-body object)
+                     '<procedure-env>))
+      (display object)))
+
+(driver-loop)
