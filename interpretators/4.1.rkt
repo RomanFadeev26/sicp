@@ -1,25 +1,90 @@
 #lang sicp
 
+(define (map-classic proc . args)
+  (if (null? (car args))
+      '()
+      (cons
+       (apply proc (map car args))
+       (apply map-classic
+              (cons proc (map cdr args))))))
+
+(define (filter predicate items)
+    (cond ((null? items) nil)
+          ((predicate (car items))
+           (cons (car items) (filter predicate (cdr items))))
+          (else (filter predicate (cdr items)))))
+
 (define (eval exp env)
-  (cond ((self-evaluating? exp) exp)
-        ((variable? exp) (lookup-variable-value exp env))
-        ((quoted? exp) (text-of-quotation exp))
-        ((assignment? exp) (eval-assignment exp env))
-        ((definition? exp) (eval-definition exp env))
-        ((if? exp) (eval-if exp env))
+  ((analyze exp) env))
+
+(define (analyze exp)
+  (cond ((self-evaluating? exp)
+         (analyze-self-evaluating exp))
+        ((quoted? exp)
+         (analyze-quoted exp))
+        ((variable? exp)
+         (analyze-variable exp))
+        ((assignment? exp)
+         (analyze-assignment exp))
+        ((definition? exp)
+         (analyze-definition exp))
+        ((if? exp)
+         (analyze-if exp))
         ((lambda? exp)
-         (make-procedure (lambda-parameters exp)
-                         (lambda-body exp)
-                         env))
+         (analyze-lambda exp))
         ((begin? exp)
-         (eval-sequence (begin-actions exp) env))
-        ((cond? exp) (eval (cond->if exp) env))
-        ((and? exp) (eval (and->if exp) env))
+         (analyze-sequence (begin-actions exp)))
+        ((cond? exp)
+         (analyze (cond->if exp)))
         ((application? exp)
-         (apply-interpretator (eval (operator exp) env)
-                (list-of-values (operands exp) env)))
+         (analyze-application exp))
         (else
-         (error "Неизвестный тип выражения -- EVAL" exp))))
+         (error "Неизвестный тип выражения -- ANALYZE" exp))))
+
+(define (analyze-self-evaluating exp)
+  (lambda (env) exp))
+
+(define (analyze-quoted exp)
+  (let ((qval (text-of-quotation exp)))
+    (lambda (env) qval)))
+
+(define (analyze-variable exp)
+  (lambda (env) (lookup-variable-value exp env)))
+
+(define (analyze-assignment exp)
+  (let ((var (assignment-variable exp))
+        (vproc (analyze (assingnment-variable exp))))
+    (lambda (env)
+      (set-variable0value! var (vproc env) env))))
+
+(define (analyze-definition exp)
+  (let ((var (definition-variable exp))
+        (vproc (analyze (definition-value exp))))
+    (lambda (env)
+      (define-variable! var (vproc env) env)
+      'ok)))
+
+;(define (eval exp env)
+ ; (cond ((self-evaluating? exp) exp)
+  ;      ((variable? exp) (lookup-variable-value exp env))
+   ;     ((quoted? exp) (text-of-quotation exp))
+    ;    ((assignment? exp) (eval-assignment exp env))
+     ;   ((definition? exp) (eval-definition exp env))
+      ;  ((if? exp) (eval-if exp env))
+       ; ((lambda? exp)
+        ; (make-procedure (lambda-parameters exp)
+         ;                (lambda-body exp)
+          ;               env))
+;        ((begin? exp)
+ ;        (eval-sequence (begin-actions exp) env))
+  ;      ((cond? exp) (eval (cond->if exp) env))
+   ;     ((and? exp) (eval (and->if exp) env))
+    ;    ((let? exp) (let->combination exp env))
+     ;   ((application? exp)
+      ;   (apply-interpretator (eval (operator exp) env)
+       ;         (list-of-values (operands exp) env)))
+        ;(else
+         ;(error "Неизвестный тип выражения -- EVAL" exp))))
 
 ;(define (eval2 exp env)
 ;  (cond ((self-evaluating? exp) exp)
@@ -78,12 +143,6 @@
   (cond ((last-exp? exps) (eval (first-exp exps) env))
         (else (eval (first-exp exps) env)
               (eval-sequence (rest-exps exps) env))))
-
-(define (val-assignment exp env)
-  (set-variable-value! (assignment-variable exp)
-                       (eval (assignment-value exp) env)
-                       env)
-  'ok)
 
 (define (eval-definition exp env)
   (define-variable!
@@ -268,6 +327,18 @@
 (define (or-clauses exp) (cdr exp))
 (define (last-clause-or? exp) (null? (cdr exp)))
 
+(define (let->combination exp env)
+  (apply-interpretator
+   (eval (make-lambda (let-var-names exp)
+                (let-body exp)) env)
+   (list-of-values (let-var-values exp) env)))
+
+(define (let? exp) (tagged-list? exp 'let))
+(define (let-clauses exp) (cadr exp))
+(define (let-body exp) (cddr exp))
+(define (let-var-names exp) (map car (let-clauses exp)))
+(define (let-var-values exp) (map cadr (let-clauses exp)))
+
 (define (true? x)
   (not (eq? x false)))
 (define (false? x)
@@ -280,7 +351,7 @@
   (tagged-list? p 'procedure))
 
 (define (procedure-parameters p) (cadr p))
-(define (procedure-body p) (caddr p))
+(define (procedure-body p) (scan-out-defines (caddr p)))
 (define (procedure-environment p) (cadddr p))
 
 (define (enclosing-environment env) (cdr env))
@@ -316,7 +387,10 @@
       (cond ((null? vars)
              (env-loop (enclosing-environment env)))
             ((eq? var (car vars))
-             (car vals))
+             (let ((value (car vals)))
+               (if (eq? value '*unassigned*)
+                   (error "Нет значения переменной -- LOOKUP-VARIABLE-VALUE" var)
+                   value)))
             (else (scan (cdr vars) (cdr vals)))))
     (if (eq? env the-empty-environment)
         (error "Несвязанная переменная" var)
@@ -325,6 +399,33 @@
                 (frame-values frame)))))
   (env-loop env))
 
+(define (scan-out-defines body)
+  (defines->let body))
+
+(define (defines->let body)
+  (let ((definitions-in-body (definitions body)))
+    (if (null? definitions-in-body)
+        body
+        (list (list
+         'let
+         (map (lambda (el) (list el ''*unassigned*)) (definition-vars definitions-in-body))
+         (make-begin (append (map-classic (lambda (val var) (list 'set! val var))
+                                          (definition-vars definitions-in-body)
+                                          (definition-vals definitions-in-body))
+                             (body-without-definitions body))
+         ))))))
+
+(define (definitions body)
+  (filter definition? body))
+
+(define (body-without-definitions body)
+  (filter (lambda (el) (not (definition? el))) body))
+
+(define (definition-vars definitions)
+  (map definition-variable definitions))
+
+(define (definition-vals definitions)
+  (map definition-value definitions))
 
 ;(define (lookup-variable-value2 var env)
  ; (define (env-loop env)
@@ -494,3 +595,18 @@
       (display object)))
 
 (driver-loop)
+
+; 4.19
+;((lambda (a)
+;   (set! a 1)
+;   ((lambda (f)
+;      (set! f (lambda (x)
+;                ((lambda (b a)
+;                   (set! b (+ a x))
+;                   (set! a 5)
+;                   (+ a b)) '*unassigned* '*unassigned*)))
+;      (f 10)) '*unassigned*)) '*unassigned*)
+
+
+
+
