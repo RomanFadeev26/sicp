@@ -115,116 +115,6 @@
          (error
           "Неизвестный тип процедуры -- EXECUTE-APPLICATION" procedure))))
 
-;(define (eval exp env)
- ; (cond ((self-evaluating? exp) exp)
-  ;      ((variable? exp) (lookup-variable-value exp env))
-   ;     ((quoted? exp) (text-of-quotation exp))
-    ;    ((assignment? exp) (eval-assignment exp env))
-     ;   ((definition? exp) (eval-definition exp env))
-      ;  ((if? exp) (eval-if exp env))
-       ; ((lambda? exp)
-        ; (make-procedure (lambda-parameters exp)
-         ;                (lambda-body exp)
-          ;               env))
-;        ((begin? exp)
- ;        (eval-sequence (begin-actions exp) env))
-  ;      ((cond? exp) (eval (cond->if exp) env))
-   ;     ((and? exp) (eval (and->if exp) env))
-    ;    ((let? exp) (let->combination exp env))
-     ;   ((application? exp)
-      ;   (apply-interpretator (eval (operator exp) env)
-       ;         (list-of-values (operands exp) env)))
-        ;(else
-         ;(error "Неизвестный тип выражения -- EVAL" exp))))
-
-;(define (eval2 exp env)
-;  (cond ((self-evaluating? exp) exp)
-;        ((variable? exp) (lookup-variable-value exp env))
-;        ((get (operator exp)) ((get (operator exp)) operands exp env))
- ;       ((application? exp)
-  ;       (apply (eval (operator exp) env)
-   ;             (list-of-values (operands exp) env)))
-    ;    (else
-      ;    (error "Неизвестный тип выражения -- EVAL" exp))))
-
-;(define (install-eval-package)
- ; (define (quoted exp env) (text-of-quotation exp env))
-  ;(define (assignment exp env) (eval-assignment exp env))
-  ;(define (definition exp env) (eval-definition exp env))
-  ;(define (if exp env) (eval-if exp env))
-  ;(define (lambda exp env) (make-procedure (lambda-parameters exp)
-   ;                                        (lambda-body exp)
-    ;                                       env))
-  ;(define (begin exp env) (eval-sequence (begin-actions exp) env))
-  ;(define (cond exp env))
-
-  ;(put 'quote quoted)
-  ;(put 'set! assignment)
-  ;(put 'define definition)
-  ;(put 'if if)
-  ;(put 'lambda lambda)
-  ;(put 'cond cond))
-
-(define (apply-interpretator procedure arguments)
-  (cond ((primitive-procedure? procedure)
-         (apply-primitive-procedure procedure arguments))
-        ((compound-procedure? procedure)
-         (eval-sequence
-          (procedure-body procedure)
-          (extend-environment
-           (procedure-parameters procedure)
-           arguments
-           (procedure-environment procedure))))
-        (else
-         (error
-          "Неизвестный тип процедуры -- APPLY" procedure))))
-
-(define (list-of-values exps env)
-  (if (no-operands? exps)
-      '()
-      (cons (eval (first-operand exps) env)
-            (list-of-values (rest-operands exps) env))))
-
-(define (eval-if exp env)
-  (if (true? (eval (if-predicate exp) env))
-      (eval (if-consequent exp) env)
-      (eval (if-alternative exp) env)))
-
-(define (eval-sequence exps env)
-  (cond ((last-exp? exps) (eval (first-exp exps) env))
-        (else (eval (first-exp exps) env)
-              (eval-sequence (rest-exps exps) env))))
-
-(define (eval-definition exp env)
-  (define-variable!
-    (definition-variable exp)
-    (eval (definition-value exp) env)
-    env)
-  'ok)
-
-(define (eval-assignment exp env)
-  (set-variable-value! (assignment-variable exp)
-                       (eval (assignment-value exp) env)
-                       env)
-  'ok)
-
-(define (list-of-values-left exps env)
-  (if (no-operands? exps)
-      (list)
-      (let ((fst-value (eval (first-operand exps) env)))
-        (cons fst-value
-              (list-of-values (rest-operands exps) env)))
-      ))
-
-
-(define (list-of-values-right exps env)
-  (if (no-operands? exps)
-      (list)
-      (let ((rest (list-of-values (rest-operands exps) env)))
-        (cons (eval (first-operand exps) env)
-              rest))
-      ))
-
 (define (self-evaluating? exp)
   (cond ((number? exp) true)
         ((string? exp) true)
@@ -336,17 +226,11 @@
                 (error "Ветвь ELSE не последняя -- COND-IF"
                        clauses))
             (make-if (cond-predicate first)
-                     (if (with-consumer? first)
-                         (apply-interpretator (consumer first) (cond-predicate first))
-                         (sequence->exp (cond-actions first)))
                      (expand-clauses rest))))))
 
 
 (define (and->if exp)
   (expand-and-clauses (and-clauses exp)))
-
-(define (with-consumer? clause) (eq? (car (cond-actions clause)) '=>))
-(define (consumer clause) (cadr (cond-actions clause)))
 
 (define (expand-and-clauses clauses)
   (if (last-clause-and? clauses)
@@ -382,12 +266,6 @@
   (cons (make-lambda (let-var-names exp)
                 (let-body exp)) (let-var-values exp)))
 
-;(define (let->combination exp env)
-;  (apply-interpretator
-;   (eval (make-lambda (let-var-names exp)
-;                (let-body exp)) env)
-;   (list-of-values (let-var-values exp) env)))
-
 (define (let? exp) (tagged-list? exp 'let))
 (define (let-clauses exp) (cadr exp))
 (define (let-body exp) (cddr exp))
@@ -415,19 +293,12 @@
 
 (define (make-frame variables values)
   (cons variables values))
-
-;(define (make-frame2 variables values)
- ; (map-classic cons variables values))
-
 (define (frame-variables frame) (car frame))
 (define (frame-values frame) (cdr frame))
 
 (define (add-binding-to-frame! var val frame)
   (set-car! frame (cons var (car frame)))
   (set-cdr! frame (cons val (cdr frame))))
-
-;(define (add-binding-to-frame2! var val frame)
- ; (set-car! frame (cons (cons var val) (car frame))))
 
 (define (extend-environment vars vals base-env)
   (if (= (length vars) (length vals))
@@ -482,17 +353,6 @@
 (define (definition-vals definitions)
   (map definition-value definitions))
 
-;(define (lookup-variable-value2 var env)
- ; (define (env-loop env)
-  ;  (define (frame-loop frame)
-   ;     (cond ((null? frame) (env-loop (enclosing-environment env)))
-    ;          ((eq? var (car (car frame))) (cadr (car frame)))
-     ;         (else (frame-loop (cdr frame)))))
-    ;(if (eq? env the-empty-environment)
-     ;   (error "Несвязанная переменная" var)
-      ;  (frame-loop (first-frame env))))
-  ;(env-loop env))
-
 (define (set-variable-value! var val env)
   (define (env-loop env)
     (define (scan vars vals)
@@ -508,28 +368,6 @@
                 (frame-values frame)))))
   (env-loop env))
 
-;(define (set-variable-value2! var val env)
- ; (define (env-loop env)
-  ;  (define (frame-loop frame)
-   ;     (cond ((null? frame) (env-loop (enclosing-environment env)))
-    ;          ((eq? var (car (car frame))) (set-cdr! (car frame) (list val)))
-     ;         (else (frame-loop (cdr frame)))))
-    ;(if (eq? env the-empty-environment)
-     ;   (error "Несвязанная переменная" var)
-      ;  (frame-loop (first-frame env))))
-  ;(env-loop env))
-
-;(define (define-variable2! var val env)
- ; (let ((frame (first-frame env)))
-  ;  (define (frame-loop frame)
-   ;   (cond ((null? frame)
-    ;         (add-binding-to-frame2! var val first-frame))
-     ;       ((eq? var (car (car frame)))
-      ;       (set-cdr! (car frame) (list val)))
-       ;     (else (frame-loop (cdr frame)))
-        ;    ))
-    ;(frame-loop first-frame)))
-
 (define (define-variable! var val env)
   (let ((frame (first-frame env)))
     (define (scan vars vals)
@@ -540,45 +378,6 @@
             (else (scan (cdr vars) (cdr vals)))))
     (scan (frame-variables frame)
           (frame-values frame))))
-
-;(define (find-binding var env)
- ; (define (env-loop env)
-  ;  (define (frame-loop frame)
-   ;     (cond ((null? frame) (env-loop (enclosing-environment env)))
-    ;          ((eq? var (car (car frame))) (cadr (car frame)))
-     ;         (else (frame-loop (cdr frame)))))
-    ;(if (eq? env the-empty-environment)
-     ;   false
-      ;  (frame-loop (first-frame env))))
-  ;(env-loop env))
-
-;(define (set-binding val binding)
- ; (set-cdr! binding (list val)))
-
-;(define (add-binding var val env)
- ; (let ((frame (first-frame env)))
-  ;  (add-binding-to-frame! var val frame)))
-
-;(define (lookup-variable-value3 var env)
- ; (let ((binding (find-binding var env)))
-  ;  (if (binding)
-   ;     (cadr binding)
-    ;    (error "Несвязанная переменная" var))))
-
-;(define (set-variable-value3! var val env)
- ; (let ((binding (find-binding var env)))
-  ;  (if (binding)
-   ;     (set-binding val binding)
-    ;    (error "Несвязанная переменная" var))
-    ;))
-
-;(define (define-variable3! var val env)
- ; (let ((binding (find-binding var env)))
-
-  ;  (if (binding)
-   ;     (set-binding val binding)
-    ;    (add-binding var val env)
-     ;   )))
 
 (define primitive-procedures
   (list (list 'car car)
@@ -651,16 +450,8 @@
 
 (driver-loop)
 
-; 4.19
-;((lambda (a)
-;   (set! a 1)
-;   ((lambda (f)
-;      (set! f (lambda (x)
-;                ((lambda (b a)
-;                   (set! b (+ a x))
-;                   (set! a 5)
-;                   (+ a b)) '*unassigned* '*unassigned*)))
-;      (f 10)) '*unassigned*)) '*unassigned*)
+
+; end of interpetator
 
 
 
