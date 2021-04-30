@@ -429,8 +429,7 @@
         (list 'cdr cdr)
         (list 'cons cons)
         (list 'null? null?)
-        (list '+ +)
-        (list 'map map)))
+        (list '+ +)))
 
 (define (primitive-procedure-names)
   (map car
@@ -455,6 +454,8 @@
   (tagged-list? proc 'primitive))
 
 (define (primitive-implementation proc) (cadr proc))
+
+
 
 (define apply-in-underlying-scheme apply)
 
