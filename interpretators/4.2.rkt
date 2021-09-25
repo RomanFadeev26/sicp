@@ -9,14 +9,18 @@
               (cons proc (map cdr args))))))
 
 (define (filter predicate items)
-    (cond ((null? items) nil)
-          ((predicate (car items))
-           (cons (car items) (filter predicate (cdr items))))
-          (else (filter predicate (cdr items)))))
+  (cond ((null? items) nil)
+        ((predicate (car items))
+         (cons (car items) (filter predicate (cdr items))))
+        (else (filter predicate (cdr items)))))
+
+(define (actual-value exp env)
+  (force-it (eval exp env)))
 
 (define (eval exp env)
   (cond ((self-evaluating? exp) exp)
         ((variable? exp) (lookup-variable-value exp env))
+        ((quoted-list? exp) (eval (quoted-list->cons (text-of-quotation exp)) env))
         ((quoted? exp) (text-of-quotation exp))
         ((assignment? exp) (eval-assignment exp env))
         ((definition? exp) (eval-definition exp env))
@@ -32,23 +36,85 @@
         ((let? exp) (let->combination exp env))
         ((application? exp)
          (apply-interpretator (actual-value (operator exp) env)
-                (operands exp) env))
+                              (operands exp) env))
         (else
          (error "Неизвестный тип выражения -- EVAL" exp))))
 
-(define (apply-interpretator procedure arguments)
+(define (apply-interpretator procedure arguments env)
   (cond ((primitive-procedure? procedure)
-         (apply-primitive-procedure procedure arguments))
+         (apply-primitive-procedure procedure
+                                    (list-of-arg-values arguments env)))
         ((compound-procedure? procedure)
          (eval-sequence
           (procedure-body procedure)
           (extend-environment
            (procedure-parameters procedure)
-           arguments
+           (list-of-delayed-args arguments env)
            (procedure-environment procedure))))
         (else
          (error
           "Неизвестный тип процедуры -- APPLY" procedure))))
+
+(define (list-of-arg-values exps env)
+  (if (no-operands? exps)
+      '()
+      (cons (actual-value (first-operand exps) env)
+            (list-of-arg-values (rest-operands exps)
+                                env))))
+
+(define (list-of-delayed-args exps env)
+  (if (no-operands? exps)
+      '()
+      (cons (delay-it (first-operand exps) env)
+            (list-of-delayed-args (rest-operands exps)
+                                  env))))
+
+(define (quoted-list->cons exp)
+  (if (null? exp)
+      ''()
+      (make-pair (car exp)
+             (quoted-list->cons (cdr exp)))))
+
+(define (make-pair a b)
+  (list 'cons a b))
+
+(define (quoted-list? exp)
+  (and (quoted? exp) (pair? (text-of-quotation exp))))
+
+;v1
+;(define (force-it obj)
+;  (if (thunk? obj)
+;      (actual-value (thunk-exp obj) (thunk-env obj))
+;      obj))
+
+(define (force-it obj)
+  (cond ((thunk? obj)
+         (let ((result (actual-value
+                        (thunk-exp obj)
+                        (thunk-env obj))))
+           (set-car! obj 'evaluated-thunk)
+           (set-car! (cdr obj) result)
+           (set-cdr! (cdr obj) '())
+           result))
+        ((evaluated-thunk? obj)
+         (thunk-value obj))
+        (else obj)))
+
+(define (delay-it exp env)
+  (list 'thunk exp env))
+
+(define (thunk? obj)
+  (tagged-list? obj 'thunk))
+
+(define (thunk-exp thunk) (cadr thunk))
+(define (thunk-env thunk) (caddr thunk))
+
+(define (evaluated-thunk? obj)
+  (tagged-list? obj 'evaluated-thunk))
+
+(define (thunk-value evaluated-thunk)
+  (cadr evaluated-thunk))
+
 
 (define (list-of-values exps env)
   (if (no-operands? exps)
@@ -57,7 +123,7 @@
             (list-of-values (rest-operands exps) env))))
 
 (define (eval-if exp env)
-  (if (true? (eval (if-predicate exp) env))
+  (if (true? (actual-value (if-predicate exp) env))
       (eval (if-consequent exp) env)
       (eval (if-alternative exp) env)))
 
@@ -190,8 +256,8 @@
                 (error "Ветвь ELSE не последняя -- COND-IF"
                        clauses))
             (make-if (cond-predicate first)
+                     (sequence->exp (cond-actions first))
                      (expand-clauses rest))))))
-
 
 (define (and->if exp)
   (expand-and-clauses (and-clauses exp)))
@@ -228,7 +294,7 @@
 
 (define (let->combination exp)
   (cons (make-lambda (let-var-names exp)
-                (let-body exp)) (let-var-values exp)))
+                     (let-body exp)) (let-var-values exp)))
 
 (define (let? exp) (tagged-list? exp 'let))
 (define (let-clauses exp) (cadr exp))
@@ -297,13 +363,13 @@
     (if (null? definitions-in-body)
         body
         (list (list
-         'let
-         (map (lambda (el) (list el ''*unassigned*)) (definition-vars definitions-in-body))
-         (make-begin (append (map-classic (lambda (val var) (list 'set! val var))
-                                          (definition-vars definitions-in-body)
-                                          (definition-vals definitions-in-body))
-                             (body-without-definitions body))
-         ))))))
+               'let
+               (map (lambda (el) (list el ''*unassigned*)) (definition-vars definitions-in-body))
+               (make-begin (append (map-classic (lambda (val var) (list 'set! val var))
+                                                (definition-vars definitions-in-body)
+                                                (definition-vals definitions-in-body))
+                                   (body-without-definitions body))
+                           ))))))
 
 (define (definitions body)
   (filter definition? body))
@@ -348,7 +414,10 @@
         (list 'cdr cdr)
         (list 'cons cons)
         (list 'null? null?)
-        (list '+ +)))
+        (list '+ +)
+        (list '= =)
+        (list '* *)
+        (list '- -)))
 
 (define (primitive-procedure-names)
   (map car
@@ -386,11 +455,11 @@
 (define output-prompt ";;; Значение M-Eval:")
 
 (define (driver-loop)
- (prompt-for-input input-prompt)
- (let ((input (read)))
-   (let ((output (eval input the-global-environment)))
-     (announce-output output-prompt)
-     (user-print output)))
+  (prompt-for-input input-prompt)
+  (let ((input (read)))
+    (let ((output (actual-value input the-global-environment)))
+      (announce-output output-prompt)
+      (user-print output)))
   (driver-loop))
 
 (define (prompt-for-input string)
@@ -416,7 +485,4 @@
 
 
 ; end of interpetator
-
-
-
 
